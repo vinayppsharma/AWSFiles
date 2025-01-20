@@ -1,0 +1,713 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: This stack will create lambda function with api gateway in qa environment
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedPattern: "[a-z0-9]+"
+    Default: dev
+  DevAccount:
+    Type: String
+    Description: The AWS account ID of the Test account.
+    Default: 840012949559
+  ECRRepositoryName:
+    Type: String
+    Default: backend
+    Description: Provide name of ecr repository
+  apiGatewayHTTPMethod:
+    Type: String
+    Default: ANY
+  ClientapiGatewayName:
+    Type: String
+    Default: clientecr
+  ClientAuthfunctionName:
+    Type: String
+    Default: clientecr-auth-api
+  FranchisorAuthfunctionName:
+    Type: String
+    Default: franchisorecr-auth-api
+  FranchisorApiGatewayName:
+    Type: String
+    Default: franchisorecr
+  FranchisorAuthApiGatewayName:
+    Type: String
+    Default: franchisorecr-auth
+  FranchisorfunctionName:
+    Type: String
+    Default: franchisorecr-api
+  FranchisorProductfunctionName:
+    Type: String
+    Default: franchisorproductecr-api
+  FranchisorProductApiGatewayName:
+    Type: String
+    Default: franchisorproductecr
+  FranchiseeProductfunctionName:
+    Type: String
+    Default: franchiseeproductecr-api
+  FranchiseeProductApiGatewayName:
+    Type: String
+    Default: franchiseeproductecr
+  FranchiseeManagementfunctionName:
+    Type: String
+    Default: franchiseemanagementecr-api
+  FranchiseeManagementApiGatewayName:
+    Type: String
+    Default: franchiseemanagementecr
+  ClientManagementfunctionName:
+    Type: String
+    Default: clientmanagementecr-api
+  ClientManagementApiGatewayName:
+    Type: String
+    Default: clientmanagementecr
+  Region:
+    Type: String
+    Default: us-east-1
+    Description: The AWS region where the resources will be created.
+
+Resources:
+  #####################################################################
+  #####################################################################
+  # Client api gateway
+  #####################################################################
+  #####################################################################
+  ClientapiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Description: API Gateway Client Rest API
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Name: !Sub ${ClientapiGatewayName}-${Environment}
+  ClientAuthApi:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt ClientapiGateway.RootResourceId
+      PathPart: "{proxy+}"
+      RestApiId: !Ref ClientapiGateway
+  ClientAuthApiMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: !Ref apiGatewayHTTPMethod
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${lambdaArn}/invocations
+          - lambdaArn: !GetAtt ClientAuthlambdaFunction.Arn
+      ResourceId: !Ref ClientAuthApi
+      RestApiId: !Ref ClientapiGateway
+  ClientApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - ClientAuthApiMethod
+    Properties:
+      RestApiId: !Ref ClientapiGateway
+      StageName: !Ref Environment
+
+  #####################################################################
+  #####################################################################
+  # Client Lambda Function
+  #####################################################################
+  #####################################################################
+  ClientAuthlambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${ClientAuthfunctionName}-${Environment}
+      PackageType: Image
+      MemorySize: 2048
+      Role: !GetAtt lambdaIAMRole.Arn
+      Code:
+        ImageUri: !Sub ${DevAccount}.dkr.ecr.${Region}.amazonaws.com/${ECRRepositoryName}:latest
+      Architectures:
+        - x86_64
+      Description: client-api
+      Timeout: 90
+  ClientAuthlambdaApiGatewayInvoke:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ClientAuthlambdaFunction
+      SourceArn:
+        !Join [
+          "",
+          [
+            "arn:aws:execute-api:",
+            { "Ref": "AWS::Region" },
+            ":",
+            { "Ref": "AWS::AccountId" },
+            ":",
+            !Ref ClientapiGateway,
+            "/*/*",
+          ],
+        ]
+      Principal: apigateway.amazonaws.com
+  ClientAuthlambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ClientAuthfunctionName}-${Environment}
+      RetentionInDays: 7
+  #####################################################################
+  #####################################################################
+
+  #####################################################################
+  #####################################################################
+  # Franchisor api gateway
+  #####################################################################
+  #####################################################################
+  FranchisorApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Description: Example API Gateway
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Name: !Sub ${FranchisorApiGatewayName}-${Environment}
+  FranchisorApi:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt FranchisorApiGateway.RootResourceId
+      PathPart: "{proxy+}"
+      RestApiId: !Ref FranchisorApiGateway
+  FranchisorApiMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: !Ref apiGatewayHTTPMethod
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${lambdaArn}/invocations
+          - lambdaArn: !GetAtt FranchisorlambdaFunction.Arn
+      ResourceId: !Ref FranchisorApi
+      RestApiId: !Ref FranchisorApiGateway
+  FranchisorApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - FranchisorApiMethod
+    Properties:
+      RestApiId: !Ref FranchisorApiGateway
+      StageName: !Ref Environment
+
+  #####################################################################
+  #####################################################################
+  # Franchisor Lambda Function
+  #####################################################################
+  #####################################################################
+  FranchisorlambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Role: !GetAtt lambdaIAMRole.Arn
+      FunctionName: !Sub ${FranchisorfunctionName}-${Environment}
+      Description: Franchisor Lambda Function Used by FranchisorAPI Gateway
+      PackageType: Image
+      MemorySize: 2048
+      Code:
+        ImageUri: !Sub ${DevAccount}.dkr.ecr.${Region}.amazonaws.com/${ECRRepositoryName}:latest
+      Architectures:
+        - x86_64
+      Timeout: 90
+  FranchisorlambdaApiGatewayInvoke:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref FranchisorlambdaFunction
+      SourceArn:
+        !Join [
+          "",
+          [
+            "arn:aws:execute-api:",
+            { "Ref": "AWS::Region" },
+            ":",
+            { "Ref": "AWS::AccountId" },
+            ":",
+            !Ref FranchisorApiGateway,
+            "/*/*",
+          ],
+        ]
+      Principal: apigateway.amazonaws.com
+  FranchisorlambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${FranchisorfunctionName}-${Environment}
+      RetentionInDays: 7
+  #####################################################################
+  #####################################################################
+
+  #####################################################################
+  #####################################################################
+  # Franchisor Auth api gateway
+  #####################################################################
+  #####################################################################
+  FranchisorAuthApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Description: Example API Gateway
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Name: !Sub ${FranchisorAuthApiGatewayName}-${Environment}
+  FranchisorAuthApi:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt FranchisorAuthApiGateway.RootResourceId
+      PathPart: "{proxy+}"
+      RestApiId: !Ref FranchisorAuthApiGateway
+  FranchisorAuthApiMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: !Ref apiGatewayHTTPMethod
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${lambdaArn}/invocations
+          - lambdaArn: !GetAtt FranchisorAuthlambdaFunction.Arn
+      ResourceId: !Ref FranchisorAuthApi
+      RestApiId: !Ref FranchisorAuthApiGateway
+  FranchisorAuthApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - FranchisorAuthApiMethod
+    Properties:
+      RestApiId: !Ref FranchisorAuthApiGateway
+      StageName: !Ref Environment
+  #####################################################################
+  #####################################################################
+  # Franchisor Auth Lambda Function
+  #####################################################################
+  #####################################################################
+  FranchisorAuthlambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Role: !GetAtt lambdaIAMRole.Arn
+      FunctionName: !Sub ${FranchisorAuthfunctionName}-${Environment}
+      Description: franchisor-authentication-api
+      PackageType: Image
+      MemorySize: 2048
+      Code:
+        ImageUri: !Sub ${DevAccount}.dkr.ecr.${Region}.amazonaws.com/${ECRRepositoryName}:latest
+      Architectures:
+        - x86_64
+      Timeout: 90
+  FranchisorAuthlambdaApiGatewayInvoke:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref FranchisorAuthlambdaFunction
+      SourceArn:
+        !Join [
+          "",
+          [
+            "arn:aws:execute-api:",
+            { "Ref": "AWS::Region" },
+            ":",
+            { "Ref": "AWS::AccountId" },
+            ":",
+            !Ref FranchisorAuthApiGateway,
+            "/*/*",
+          ],
+        ]
+      Principal: apigateway.amazonaws.com
+  FranchisorAuthlambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${FranchisorAuthfunctionName}-${Environment}
+      RetentionInDays: 7
+  #####################################################################
+  #####################################################################
+
+  #####################################################################
+  #####################################################################
+  # Franchisor Product api gateway
+  #####################################################################
+  #####################################################################
+  FranchisorProductApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Description: Example API Gateway
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Name: !Sub ${FranchisorProductApiGatewayName}-${Environment}
+  FranchisorProductApi:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt FranchisorProductApiGateway.RootResourceId
+      PathPart: "{proxy+}"
+      RestApiId: !Ref FranchisorProductApiGateway
+
+  FranchisorProductApiMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: !Ref apiGatewayHTTPMethod
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${lambdaArn}/invocations
+          - lambdaArn: !GetAtt FranchisorProductlambdaFunction.Arn
+      ResourceId: !Ref FranchisorProductApi
+      RestApiId: !Ref FranchisorProductApiGateway
+  FranchisorProductApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - FranchisorProductApiMethod
+    Properties:
+      RestApiId: !Ref FranchisorProductApiGateway
+      StageName: !Ref Environment
+  #####################################################################
+  #####################################################################
+  # Franchisor Product Lambda Function
+  #####################################################################
+  #####################################################################
+  FranchisorProductlambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Role: !GetAtt lambdaIAMRole.Arn
+      FunctionName: !Sub ${FranchisorProductfunctionName}-${Environment}
+      Description: franchisor-api
+      PackageType: Image
+      MemorySize: 2048
+      Code:
+        ImageUri: !Sub ${DevAccount}.dkr.ecr.${Region}.amazonaws.com/${ECRRepositoryName}:latest
+      Architectures:
+        - x86_64
+      Timeout: 90
+  FranchisorProductlambdaApiGatewayInvoke:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref FranchisorProductlambdaFunction
+      SourceArn:
+        !Join [
+          "",
+          [
+            "arn:aws:execute-api:",
+            { "Ref": "AWS::Region" },
+            ":",
+            { "Ref": "AWS::AccountId" },
+            ":",
+            !Ref FranchisorProductApiGateway,
+            "/*/*",
+          ],
+        ]
+      Principal: apigateway.amazonaws.com
+  FranchisorProductlambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${FranchisorProductfunctionName}-${Environment}
+  #####################################################################
+  #####################################################################
+
+  #####################################################################
+  #####################################################################
+  # Franchisee Product api gateway
+  #####################################################################
+  #####################################################################
+  FranchiseeProductApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Description: Example API Gateway
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Name: !Sub ${FranchiseeProductApiGatewayName}-${Environment}
+  FranchiseeProductApi:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt FranchiseeProductApiGateway.RootResourceId
+      PathPart: "{proxy+}"
+      RestApiId: !Ref FranchiseeProductApiGateway
+  FranchiseeProductApiMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: !Ref apiGatewayHTTPMethod
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${lambdaArn}/invocations
+          - lambdaArn: !GetAtt FranchiseeProductlambdaFunction.Arn
+      ResourceId: !Ref FranchiseeProductApi
+      RestApiId: !Ref FranchiseeProductApiGateway
+  FranchiseeProductApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - FranchiseeProductApiMethod
+    Properties:
+      RestApiId: !Ref FranchiseeProductApiGateway
+      StageName: !Ref Environment
+  #####################################################################
+  #####################################################################
+  # Franchisee Product Lambda Function
+  #####################################################################
+  #####################################################################
+  FranchiseeProductlambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Role: !GetAtt lambdaIAMRole.Arn
+      FunctionName: !Sub ${FranchiseeProductfunctionName}-${Environment}
+      Description: franchisee-api
+      PackageType: Image
+      MemorySize: 2048
+      Code:
+        ImageUri: !Sub ${DevAccount}.dkr.ecr.${Region}.amazonaws.com/${ECRRepositoryName}:latest
+      Architectures:
+        - x86_64
+      Timeout: 90
+  FranchiseeProductlambdaApiGatewayInvoke:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref FranchiseeProductlambdaFunction
+      SourceArn:
+        !Join [
+          "",
+          [
+            "arn:aws:execute-api:",
+            { "Ref": "AWS::Region" },
+            ":",
+            { "Ref": "AWS::AccountId" },
+            ":",
+            !Ref FranchiseeProductApiGateway,
+            "/*/*",
+          ],
+        ]
+      Principal: apigateway.amazonaws.com
+  FranchiseeProductlambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${FranchiseeProductfunctionName}-${Environment}
+  #####################################################################
+  #####################################################################
+
+  #####################################################################
+  #####################################################################
+  # Franchisee Management api gateway
+  #####################################################################
+  #####################################################################
+  FranchiseeManagementApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Description: Example API Gateway
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Name: !Sub ${FranchiseeManagementApiGatewayName}-${Environment}
+  FranchiseeManagementApi:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt FranchiseeManagementApiGateway.RootResourceId
+      PathPart: "{proxy+}"
+      RestApiId: !Ref FranchiseeManagementApiGateway
+  FranchiseeManagementApiMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: !Ref apiGatewayHTTPMethod
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${lambdaArn}/invocations
+          - lambdaArn: !GetAtt FranchiseeManagementlambdaFunction.Arn
+      ResourceId: !Ref FranchiseeManagementApi
+      RestApiId: !Ref FranchiseeManagementApiGateway
+  FranchiseeManagementApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - FranchiseeManagementApiMethod
+    Properties:
+      RestApiId: !Ref FranchiseeManagementApiGateway
+      StageName: !Ref Environment
+  #####################################################################
+  #####################################################################
+  # Franchisee Management Lambda Function
+  #####################################################################
+  #####################################################################
+  FranchiseeManagementlambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Role: !GetAtt lambdaIAMRole.Arn
+      FunctionName: !Sub ${FranchiseeManagementfunctionName}-${Environment}
+      Description: franchisee-api
+      PackageType: Image
+      MemorySize: 2048
+      Code:
+        ImageUri: !Sub ${DevAccount}.dkr.ecr.${Region}.amazonaws.com/${ECRRepositoryName}:latest
+      Architectures:
+        - x86_64
+      Timeout: 90
+  FranchiseeManagementlambdaApiGatewayInvoke:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref FranchiseeManagementlambdaFunction
+      SourceArn:
+        !Join [
+          "",
+          [
+            "arn:aws:execute-api:",
+            { "Ref": "AWS::Region" },
+            ":",
+            { "Ref": "AWS::AccountId" },
+            ":",
+            !Ref FranchiseeManagementApiGateway,
+            "/*/*",
+          ],
+        ]
+      Principal: apigateway.amazonaws.com
+  FranchiseeManagementlambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${FranchiseeManagementfunctionName}-${Environment}
+  #####################################################################
+  #####################################################################
+
+  #####################################################################
+  #####################################################################
+  # Client Management api gateway
+  #####################################################################
+  #####################################################################
+  ClientManagementApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Description: Example API Gateway
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Name: !Sub ${ClientManagementApiGatewayName}-${Environment}
+  ClientManagementApi:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt ClientManagementApiGateway.RootResourceId
+      PathPart: "{proxy+}"
+      RestApiId: !Ref ClientManagementApiGateway
+  ClientManagementApiMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: !Ref apiGatewayHTTPMethod
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${lambdaArn}/invocations
+          - lambdaArn: !GetAtt ClientManagementlambdaFunction.Arn
+      ResourceId: !Ref ClientManagementApi
+      RestApiId: !Ref ClientManagementApiGateway
+  ClientManagementApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - ClientManagementApiMethod
+    Properties:
+      RestApiId: !Ref ClientManagementApiGateway
+      StageName: !Ref Environment
+  #####################################################################
+  #####################################################################
+  # Client Management Lambda Function
+  #####################################################################
+  #####################################################################
+  ClientManagementlambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Role: !GetAtt lambdaIAMRole.Arn
+      FunctionName: !Sub ${ClientManagementfunctionName}-${Environment}
+      Description: Client-api
+      PackageType: Image
+      MemorySize: 2048
+      Code:
+        ImageUri: !Sub ${DevAccount}.dkr.ecr.${Region}.amazonaws.com/${ECRRepositoryName}:latest
+      Architectures:
+        - x86_64
+      Timeout: 90
+  ClientManagementlambdaApiGatewayInvoke:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ClientManagementlambdaFunction
+      SourceArn:
+        !Join [
+          "",
+          [
+            "arn:aws:execute-api:",
+            { "Ref": "AWS::Region" },
+            ":",
+            { "Ref": "AWS::AccountId" },
+            ":",
+            !Ref ClientManagementApiGateway,
+            "/*/*",
+          ],
+        ]
+      Principal: apigateway.amazonaws.com
+  ClientManagementlambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ClientManagementfunctionName}-${Environment}
+  #####################################################################
+  #####################################################################
+
+  #####################################################################
+  #####################################################################
+  # LAMBDA ROLE
+  #####################################################################
+  #####################################################################
+  lambdaIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+
+      Policies:
+        - PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - cognito-identity:*
+                  - cognito-idp:*
+                  - cognito-sync:*
+                  - dynamodb:*
+                  - dax:*
+                  - logs:PutLogEvents
+                  - iam:CreateRole
+                  - iam:GetRole
+                  - iam:AttachRolePolicy
+                  - iam:PassRole
+                  - lambda:AddPermission
+                  - lambda:CreateFunction
+                  - lambda:GetFunction
+                  - lambda:UpdateFunctionCode
+                  - lambda:UpdateFunctionConfiguration
+                  - lambda:ListFunctions
+                Effect: Allow
+                Resource: "*"
+          PolicyName: lambda
+
+Outputs:
+  ClientapiGatewayInvokeURL:
+    Value: !Sub https://${ClientapiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
+  FranchisorApiGatewayInvokeURL:
+    Value: !Sub https://${FranchisorApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
+  FranchisorAuthApiGatewayInvokeURL:
+    Value: !Sub https://${FranchisorAuthApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
