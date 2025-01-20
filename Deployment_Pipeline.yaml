@@ -1,0 +1,280 @@
+---
+Parameters:
+  SiteBucketName:
+    Type: String
+    Default: "ZoomroomLambda"
+    Description: Name of bucket to create to host the website
+  GitHubOAuthToken:
+    Type: String
+    Description: GitHub oauth token.
+    Default: ""
+    NoEcho: true
+  GitHubRepoOwner:
+    Type: String
+    Description: GitHub repo owner.
+    Default: ZoomroomGit   
+  GitHubRepo:
+    Type: String
+    Description: GitHub git repo.
+    Default: Backend
+  GitHubBranch:
+    Type: String
+    Description: Git branch.
+    Default: main
+  ClientAuthfunctionName:
+    Type: String
+    Default: clientecr-auth-api
+  FranchisorAuthfunctionName:
+    Type: String
+    Default: franchisorecr-auth-api
+  FranchisorfunctionName:
+    Type: String
+    Default: franchisorecr-api
+  FranchisorProductfunctionName:
+    Type: String
+    Default: franchisorproductecr-api
+  FranchiseeProductfunctionName:
+    Type: String
+    Default: franchiseeproductecr-api
+  FranchiseeManagementfunctionName:
+    Type: String
+    Default: franchiseemanagementecr-api
+  ClientManagementfunctionName:
+    Type: String
+    Default: clientmanagementecr-api
+
+  DevAccount:
+    Type: String
+    Default: 840012949559 
+    Description: The AWS account ID of the Test account.
+  
+Resources:
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - codepipeline.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: codepipeline-service
+        PolicyDocument:
+          Statement:
+          - Action:
+            - codecommit:GetBranch
+            - codecommit:GetCommit
+            - codecommit:UploadArchive
+            - codecommit:GetUploadArchiveStatus
+            - codecommit:CancelUploadArchive
+            Resource: "*"
+            Effect: Allow
+          - Action:
+            - s3:GetObject
+            - s3:GetObjectVersion
+            - s3:GetBucketVersioning
+            Resource: "*"
+            Effect: Allow
+          - Action:
+            - s3:PutObject
+            Resource:
+            - arn:aws:s3:::codepipeline*
+            Effect: Allow
+          - Action:
+            - s3:*
+
+            - iam:PassRole
+            Resource: "*"
+            Effect: Allow
+          - Action:
+            - codebuild:CreateProject
+            - codebuild:StartBuild
+            - codebuild:StopBuild
+            - codebuild:BatchDeleteBuilds
+            - codebuild:BatchGetBuilds
+            - iam:PassRole
+            Resource: "*"
+            Effect: Allow
+  CodePipelineStack:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: zoomroom-backend
+      RoleArn:
+        Fn::Join:
+        - ''
+        - - 'arn:aws:iam::'
+          - Ref: AWS::AccountId
+          - ":role/"
+          - Ref: CodePipelineRole
+      Stages:
+        - Name: Source
+          Actions:
+          - InputArtifacts: []
+            Name: Source
+            ActionTypeId:
+              Category: Source
+              Owner: ThirdParty
+              Version: '1'
+              Provider: GitHub
+            OutputArtifacts:
+              - Name: SourceArtifact
+            Configuration:
+              Owner: !Ref GitHubRepoOwner
+              Repo: !Ref GitHubRepo
+              Branch: !Ref GitHubBranch
+              OAuthToken: !Ref GitHubOAuthToken
+            RunOrder: 1
+        - Name: Development
+          Actions:
+            - Name: Development
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              OutputArtifacts:
+                - Name: DevelopmentBuild
+              InputArtifacts:
+                - Name: SourceArtifact
+              Configuration:
+                ProjectName: !Ref CodeBuildNodeProjectDevelopment
+              RunOrder: 1
+        
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com              
+            Action: sts:AssumeRole
+          
+      Path: "/"
+      Policies:
+      - PolicyName: codebuild-service
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action: 
+              - iam:CreateRole
+              - iam:GetRole
+              - iam:AttachRolePolicy
+              - iam:PassRole
+              - lambda:AddPermission
+              - lambda:CreateFunction
+              - lambda:GetFunction
+              - lambda:UpdateFunctionCode
+              - lambda:UpdateFunctionConfiguration
+              - lambda:ListFunctions
+              - logs:FilterLogEvents
+              - logs:getLogEvents
+              - logs:describeLogStreams
+              - "s3:*"
+              - "codebuild:*"
+              - "cloudwatch:*"
+              - "logs:*"
+              - "ecr:*"
+            Resource: "*"
+          Version: '2012-10-17'
+  
+  CodeBuildNodeProjectDevelopment:            
+    Type: AWS::CodeBuild::Project
+    DependsOn: CodeBuildRole
+    Properties:
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_MEDIUM
+        Image: aws/codebuild/standard:6.0
+        Type: LINUX_CONTAINER
+        PrivilegedMode: true
+      Name: zoomroom-backend-develop
+      ServiceRole: !Ref CodeBuildRole
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: !Sub |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                - echo creating zip file for lambda functions...
+                - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${DevAccount}.dkr.ecr.us-east-1.amazonaws.com
+                               
+            build:
+              commands:
+                - echo Build started on `date`    
+            post_build:
+              commands:
+                - ls
+                - cd Client-Authentication
+                - aws s3 cp s3://documenttestbucket1/env\(33\).dev .env
+                - docker build -t backend:clientdev .
+                - docker tag backend:clientdev ${DevAccount}.dkr.ecr.us-east-1.amazonaws.com/backend:clientdev 
+                - docker push ${DevAccount}.dkr.ecr.us-east-1.amazonaws.com/backend:clientdev  
+                - aws lambda update-function-code --function-name ${ClientAuthfunctionName}-dev --image-uri ${DevAccount}.dkr.ecr.us-east-1.amazonaws.com/backend:clientdev 
+                - cd .. 
+                - cd Franchisor-API
+                - aws s3 cp s3://documenttestbucket1/env\(37\).dev .env
+                - docker build -t backend:franchisordev .
+                - docker tag backend:franchisordev ${DevAccount}.dkr.ecr.us-east-1.amazonaws.com/backend:franchisordev 
+                - docker push ${DevAccount}.dkr.ecr.us-east-1.amazonaws.com/backend:franchisordev  
+                - aws lambda update-function-code --function-name ${FranchisorfunctionName}-dev --image-uri ${DevAccount}.dkr.ecr.us-east-1.amazonaws.com/backend:franchisordev        
+                - cd ..
+                - cd Franchisor-Authentication
+                - aws s3 cp s3://documenttestbucket1/env\(38\).dev .env
+                - docker build -t backend:franchisorauthdev .
+                - docker tag backend:franchisorauthdev ${DevAccount}.dkr.ecr.us-east-1.amazonaws.com/backend:franchisorauthdev 
+                - docker push ${DevAccount}.dkr.ecr.us-east-1.amazonaws.com/backend:franchisorauthdev  
+                - aws lambda update-function-code --function-name ${FranchisorAuthfunctionName}-dev --image-uri ${DevAccount}.dkr.ecr.us-east-1.amazonaws.com/backend:franchisorauthdev               
+                - cd .. 
+                - cd Franchisor-Products
+                - aws s3 cp s3://documenttestbucket1/env\(39\).dev .env
+                - docker build -t backend:franchisorproductdev .
+                - docker tag backend:franchisorproductdev ${DevAccount}.dkr.ecr.us-east-1.amazonaws.com/backend:franchisorproductdev 
+                - docker push ${DevAccount}.dkr.ecr.us-east-1.amazonaws.com/backend:franchisorproductdev  
+                - aws lambda update-function-code --function-name ${FranchisorProductfunctionName}-dev --image-uri ${DevAccount}.dkr.ecr.us-east-1.amazonaws.com/backend:franchisorproductdev               
+                - cd .. 
+                - cd Franchisee-Products
+                - aws s3 cp s3://documenttestbucket1/env\(36\).dev .env
+                - docker build -t backend:franchiseeproductdev .
+                - docker tag backend:franchiseeproductdev ${DevAccount}.dkr.ecr.us-east-1.amazonaws.com/backend:franchiseeproductdev 
+                - docker push ${DevAccount}.dkr.ecr.us-east-1.amazonaws.com/backend:franchiseeproductdev  
+                - aws lambda update-function-code --function-name ${FranchiseeProductfunctionName}-dev --image-uri ${DevAccount}.dkr.ecr.us-east-1.amazonaws.com/backend:franchiseeproductdev               
+                - cd .. 
+                - cd Franchisee-Management
+                - aws s3 cp s3://documenttestbucket1/env\(35\).dev .env
+                - docker build -t backend:franchiseemanagementdev .
+                - docker tag backend:franchiseemanagementdev ${DevAccount}.dkr.ecr.us-east-1.amazonaws.com/backend:franchiseemanagementdev 
+                - docker push ${DevAccount}.dkr.ecr.us-east-1.amazonaws.com/backend:franchiseemanagementdev  
+                - aws lambda update-function-code --function-name ${FranchiseeManagementfunctionName}-dev --image-uri ${DevAccount}.dkr.ecr.us-east-1.amazonaws.com/backend:franchiseemanagementdev               
+                - cd ..
+                - cd Client
+                - aws s3 cp s3://documenttestbucket1/env\(34\).dev .env
+                - docker build -t backend:clientmanagementdev .
+                - docker tag backend:clientmanagementdev ${DevAccount}.dkr.ecr.us-east-1.amazonaws.com/backend:clientmanagementdev 
+                - docker push ${DevAccount}.dkr.ecr.us-east-1.amazonaws.com/backend:clientmanagementdev  
+                - aws lambda update-function-code --function-name ${ClientManagementfunctionName}-dev --image-uri ${DevAccount}.dkr.ecr.us-east-1.amazonaws.com/backend:clientmanagementdev               
+                - cd ..  
+                - echo Build successfully completed on `date`
+          artifacts:
+            files:
+              - '**/*'
+      TimeoutInMinutes: 10
+  
+Outputs:
+  CodeBuildRoleArn:
+    Value: !GetAtt CodeBuildRole.Arn
+
+
