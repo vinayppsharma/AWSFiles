@@ -1,0 +1,119 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  Create an ECR repository, push a Node.js 20 image using AWS CodeBuild, and delete the CodeBuild project after execution.
+
+Parameters:
+  RepositoryName:
+    Type: String
+    Default: backend
+    Description: Name of the ECR repository.
+
+  NodeVersion:
+    Type: String
+    Default: '20'
+    Description: Node.js version to pull and push to the ECR repository.
+
+Resources:
+  # Create the ECR Repository
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref RepositoryName
+      ImageScanningConfiguration:
+        ScanOnPush: true
+
+  # Create an S3 bucket for CodeBuild artifacts
+  CodeBuildS3Bucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Sub ${AWS::StackName}-codebuild-artifacts
+
+  # IAM Role for CodeBuild
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildECRPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:CompleteLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:InitiateLayerUpload
+                  - ecr:PutImage
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:GetBucketLocation
+                Resource: !Sub arn:aws:s3:::${CodeBuildS3Bucket}/*
+
+  # CodeBuild Project
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    DependsOn: ECRRepository
+    Properties:
+      Name: !Sub ${AWS::StackName}-PushNodeImage
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: S3
+        Location: !Ref CodeBuildS3Bucket
+        Path: artifacts
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:6.0
+        Type: LINUX_CONTAINER
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: ECR_URI
+            Value: !GetAtt ECRRepository.RepositoryUri
+          - Name: NODE_VERSION
+            Value: !Ref NodeVersion
+      Source:
+        Type: NO_SOURCE
+        BuildSpec: !Sub |
+            version: 0.2
+            phases:
+              pre_build:
+                commands:
+                  - echo Logging in to Amazon ECR...
+                  - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_URI
+              build:
+                commands:
+                  - echo Pulling Node.js ${NodeVersion} image...
+                  - docker pull node:${NodeVersion}
+                  - echo Tagging image...
+                  - docker tag node:${NodeVersion} $ECR_URI:latest
+                  - echo Pushing image to ECR...
+                  - docker push $ECR_URI:latest
+            artifacts:
+              files:
+                - '**/*'
+
+
+Outputs:
+  ECRRepositoryUri:
+    Description: URI of the created ECR repository
+    Value: !GetAtt ECRRepository.RepositoryUri
+  CodeBuildProjectName:
+    Description: The name of the temporary CodeBuild project
+    Value: !Ref CodeBuildProject
